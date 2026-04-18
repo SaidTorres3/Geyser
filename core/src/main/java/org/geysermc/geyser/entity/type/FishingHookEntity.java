@@ -42,9 +42,10 @@ import org.geysermc.mcprotocollib.protocol.data.game.entity.metadata.type.IntEnt
 
 import java.util.concurrent.ThreadLocalRandom;
 
-public class FishingHookEntity extends ThrowableEntity {
+public class FishingHookEntity extends ProjectileEntity {
 
     private boolean hooked = false;
+    private boolean castByPlayer = false;
     private boolean inWater = false;
 
     @Getter
@@ -66,6 +67,19 @@ public class FishingHookEntity extends ThrowableEntity {
 
         this.bedrockOwnerId = owner.geyserId();
         this.dirtyMetadata.put(EntityDataTypes.OWNER_EID, this.bedrockOwnerId);
+
+        if (owner == session.getPlayerEntity()) {
+            session.setFishingRodCast(true);
+            castByPlayer = true;
+        }
+    }
+
+    @Override
+    public void despawnEntity() {
+        if (castByPlayer) {
+            session.setFishingRodCast(false);
+        }
+        super.despawnEntity();
     }
 
     public void setHookedEntity(IntEntityMetadata entityMetadata) {
@@ -124,7 +138,7 @@ public class FishingHookEntity extends ThrowableEntity {
             }
             PlaySoundPacket playSoundPacket = new PlaySoundPacket();
             playSoundPacket.setSound("random.splash");
-            playSoundPacket.setPosition(position);
+            playSoundPacket.setPosition(bedrockPosition());
             playSoundPacket.setVolume(volume);
             playSoundPacket.setPitch(1f + ThreadLocalRandom.current().nextFloat() * 0.3f);
             session.sendUpstreamPacket(playSoundPacket);
@@ -133,7 +147,7 @@ public class FishingHookEntity extends ThrowableEntity {
 
     @Override
     public void tick() {
-        if (removedInVoid()) {
+        if (removedInVoid() || vehicle != null) {
             return;
         }
         if (hooked || !isInAir() && !isInWater() || isOnGround()) {

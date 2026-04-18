@@ -73,7 +73,7 @@ import org.geysermc.geyser.entity.type.SpawnerMinecartEntity;
 import org.geysermc.geyser.entity.type.TNTEntity;
 import org.geysermc.geyser.entity.type.TextDisplayEntity;
 import org.geysermc.geyser.entity.type.ThrowableEggEntity;
-import org.geysermc.geyser.entity.type.ThrowableEntity;
+import org.geysermc.geyser.entity.type.ProjectileEntity;
 import org.geysermc.geyser.entity.type.ThrowableItemEntity;
 import org.geysermc.geyser.entity.type.ThrownPotionEntity;
 import org.geysermc.geyser.entity.type.TridentEntity;
@@ -259,7 +259,7 @@ public final class EntityDefinitions {
     public static final EntityDefinition<LeashKnotEntity> LEASH_KNOT;
     public static final EntityDefinition<LightningEntity> LIGHTNING_BOLT;
     public static final EntityDefinition<LlamaEntity> LLAMA;
-    public static final EntityDefinition<ThrowableEntity> LLAMA_SPIT;
+    public static final EntityDefinition<ProjectileEntity> LLAMA_SPIT;
     public static final EntityDefinition<MagmaCubeEntity> MAGMA_CUBE;
     public static final EntityDefinition<BoatEntity> MANGROVE_BOAT;
     public static final EntityDefinition<ChestBoatEntity> MANGROVE_CHEST_BOAT;
@@ -293,7 +293,7 @@ public final class EntityDefinitions {
     public static final EntityDefinition<SheepEntity> SHEEP;
     public static final EntityDefinition<ShulkerEntity> SHULKER;
     public static final EntityDefinition<SnifferEntity> SNIFFER;
-    public static final EntityDefinition<ThrowableEntity> SHULKER_BULLET;
+    public static final EntityDefinition<ProjectileEntity> SHULKER_BULLET;
     public static final EntityDefinition<MonsterEntity> SILVERFISH;
     public static final EntityDefinition<SkeletonEntity> SKELETON;
     public static final EntityDefinition<SkeletonHorseEntity> SKELETON_HORSE;
@@ -348,8 +348,8 @@ public final class EntityDefinitions {
         EntityDefinition<Entity> entityBase = EntityDefinition.builder(Entity::new)
                 .addTranslator(MetadataTypes.BYTE, Entity::setFlags)
                 .addTranslator(MetadataTypes.INT, Entity::setAir) // Air/bubbles
-                .addTranslator(MetadataTypes.OPTIONAL_COMPONENT, Entity::setDisplayName)
-                .addTranslator(MetadataTypes.BOOLEAN, Entity::setDisplayNameVisible)
+                .addTranslator(MetadataTypes.OPTIONAL_COMPONENT, Entity::setCustomName)
+                .addTranslator(MetadataTypes.BOOLEAN, Entity::setCustomNameVisible)
                 .addTranslator(MetadataTypes.BOOLEAN, Entity::setSilent)
                 .addTranslator(MetadataTypes.BOOLEAN, Entity::setGravity)
                 .addTranslator(MetadataTypes.POSE, (entity, entityMetadata) -> entity.setPose(entityMetadata.getValue()))
@@ -425,11 +425,11 @@ public final class EntityDefinitions {
             LIGHTNING_BOLT = EntityDefinition.inherited(LightningEntity::new, entityBase)
                     .type(EntityType.LIGHTNING_BOLT)
                     .build();
-            LLAMA_SPIT = EntityDefinition.inherited(ThrowableEntity::new, entityBase)
+            LLAMA_SPIT = EntityDefinition.inherited(ProjectileEntity::new, entityBase)
                     .type(EntityType.LLAMA_SPIT)
                     .heightAndWidth(0.25f)
                     .build();
-            SHULKER_BULLET = EntityDefinition.inherited(ThrowableEntity::new, entityBase)
+            SHULKER_BULLET = EntityDefinition.inherited(ProjectileEntity::new, entityBase)
                     .type(EntityType.SHULKER_BULLET)
                     .heightAndWidth(0.3125f)
                     .build();
@@ -535,7 +535,7 @@ public final class EntityDefinitions {
             EntityDefinition<AbstractArrowEntity> abstractArrowBase = EntityDefinition.inherited(AbstractArrowEntity::new, entityBase)
                     .addTranslator(MetadataTypes.BYTE, AbstractArrowEntity::setArrowFlags)
                     .addTranslator(null) // "Piercing level"
-                    .addTranslator(null) // If the arrow is in the ground
+                    .addTranslator(MetadataTypes.BOOLEAN, AbstractArrowEntity::setInGround) // If the arrow is in the ground
                     .build();
             ARROW = EntityDefinition.inherited(ArrowEntity::new, abstractArrowBase)
                     .type(EntityType.ARROW)
@@ -1229,6 +1229,8 @@ public final class EntityDefinitions {
             ZOMBIE_NAUTILUS = EntityDefinition.inherited(ZombieNautilusEntity::new, abstractNautilusBase)
                 .type(EntityType.ZOMBIE_NAUTILUS)
                 .identifier("minecraft:zombie_nautilus")
+                .property(ZombieNautilusEntity.VARIANT_ENUM_PROPERTY)
+                .addTranslator(MetadataTypes.ZOMBIE_NAUTILUS_VARIANT, ZombieNautilusEntity::setVariant)
                 .build();
         }
 

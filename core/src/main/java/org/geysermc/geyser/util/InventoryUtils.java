@@ -189,10 +189,10 @@ public class InventoryUtils {
         updateCursor(session);
 
         if (holder != null) {
-            holder.closeInventory(confirm);
             if (holder.shouldConfirmClose(confirm)) {
                 session.setClosingInventory(true);
             }
+            holder.closeInventory(confirm);
             session.getBundleCache().onInventoryClose(holder.inventory());
             GeyserImpl.getInstance().getLogger().debug(session, "Closed inventory: (java id: %s/bedrock id: %s), waiting on confirm? %s", holder.javaId(), holder.bedrockId(), session.isClosingInventory());
         }
@@ -232,13 +232,13 @@ public class InventoryUtils {
         // Check if a fake block can be placed, either above the player or beneath.
         BedrockDimension dimension = session.getBedrockDimension();
         int minY = dimension.minY(), maxY = minY + dimension.height();
-        Vector3i flatPlayerPosition = session.getPlayerEntity().getPosition().toInt();
+        Vector3i flatPlayerPosition = session.getPlayerEntity().bedrockPosition().toInt();
         Vector3i position = flatPlayerPosition.add(Vector3i.UP);
         if (position.getY() < minY) {
             return null;
         }
         if (position.getY() >= maxY || !canUseWorldSpace(session, position)) {
-            position = flatPlayerPosition.sub(0, 4, 0);
+            position = flatPlayerPosition.down(3);
             if (position.getY() >= maxY || !canUseWorldSpace(session, position)) {
                 return null;
             }
@@ -406,7 +406,7 @@ public class InventoryUtils {
         for (GeyserRecipe recipe : session.getCraftingRecipes().values()) {
             if (recipe.isShaped()) {
                 GeyserShapedRecipe shapedRecipe = (GeyserShapedRecipe) recipe;
-                if (output != null && !acceptsAsInput(session, shapedRecipe.result(), GeyserItemStack.from(output))) {
+                if (output != null && !acceptsAsInput(session, shapedRecipe.result(), GeyserItemStack.from(session, output))) {
                     continue;
                 }
                 List<SlotDisplay> ingredients = shapedRecipe.ingredients();
@@ -433,7 +433,7 @@ public class InventoryUtils {
                 }
             } else {
                 GeyserShapelessRecipe data = (GeyserShapelessRecipe) recipe;
-                if (output != null && !acceptsAsInput(session, data.result(), GeyserItemStack.from(output))) {
+                if (output != null && !acceptsAsInput(session, data.result(), GeyserItemStack.from(session, output))) {
                     continue;
                 }
                 if (nonAirCount != data.ingredients().size()) {

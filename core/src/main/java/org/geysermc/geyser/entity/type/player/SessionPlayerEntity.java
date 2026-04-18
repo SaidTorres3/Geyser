@@ -131,6 +131,12 @@ public class SessionPlayerEntity extends PlayerEntity {
     @Getter @Setter
     private float javaYaw;
 
+    /**
+     * If the player is colliding on the vertical axis or not according to the client.
+     */
+    @Getter @Setter
+    private boolean collidingVertically;
+
     public SessionPlayerEntity(GeyserSession session) {
         super(new EntitySpawnContext(session, EntityDefinitions.PLAYER, -1, null), null, null);
 
@@ -164,7 +170,7 @@ public class SessionPlayerEntity extends PlayerEntity {
     @Override
     public void moveRelativeRaw(double relX, double relY, double relZ, float yaw, float pitch, float headYaw, boolean isOnGround) {
         super.moveRelativeRaw(relX, relY, relZ, yaw, pitch, headYaw, isOnGround);
-        session.getCollisionManager().updatePlayerBoundingBox(this.position.down(definition.offset()));
+        session.getCollisionManager().updatePlayerBoundingBox(this.position);
     }
 
     @Override
@@ -176,7 +182,7 @@ public class SessionPlayerEntity extends PlayerEntity {
                 session.setNoClip(false);
             }
         }
-        this.position = position.add(0, definition.offset(), 0);
+        this.position = position;
     }
 
     /**
@@ -193,8 +199,8 @@ public class SessionPlayerEntity extends PlayerEntity {
         
         MovePlayerPacket movePlayerPacket = new MovePlayerPacket();
         movePlayerPacket.setRuntimeEntityId(geyserId);
-        movePlayerPacket.setPosition(position);
-        movePlayerPacket.setRotation(getBedrockRotation());
+        movePlayerPacket.setPosition(bedrockPosition());
+        movePlayerPacket.setRotation(bedrockRotation());
         movePlayerPacket.setOnGround(isOnGround());
         movePlayerPacket.setMode(MovePlayerPacket.Mode.TELEPORT);
         movePlayerPacket.setTeleportationCause(MovePlayerPacket.TeleportationCause.BEHAVIOR);
@@ -215,8 +221,15 @@ public class SessionPlayerEntity extends PlayerEntity {
      *
      * @param position the new position of the Bedrock player
      */
-    public void setPositionManual(Vector3f position) {
-        this.position = position;
+    public void setPositionFromBedrockPos(Vector3f position) {
+        // Special handling: position while sleeping
+        if (bedPosition != null && getFlag(EntityFlag.SLEEPING)) {
+            this.position = position.down(0.2f);
+        } else if (this.vehicle != null) {
+            this.position = position.down(this.vehicle.getOffset());
+        } else {
+            this.position = position.down(offset);
+        }
 
         // Player is "above" the void so they're not supposed to no clip.
         if (session.isNoClip() && position.getY() - EntityDefinitions.PLAYER.offset() >= session.getBedrockDimension().minY() - 5) {
@@ -244,6 +257,13 @@ public class SessionPlayerEntity extends PlayerEntity {
             session.setShouldSendSneak(false);
             session.stopSneaking(false);
         }
+    }
+
+    @Override
+    protected void setAttributeScale(float scale) {
+        super.setAttributeScale(scale);
+        session.getCollisionManager().setScale(this.attributeScale);
+        session.getCollisionManager().updatePlayerBoundingBox();
     }
 
     /**
@@ -424,9 +444,9 @@ public class SessionPlayerEntity extends PlayerEntity {
                 GeyserAttributeType.ABSORPTION.getAttribute(0f)));
         session.sendUpstreamPacket(attributesPacket);
 
-        dirtyMetadata.put(EntityDataTypes.EFFECT_COLOR, 0);
         dirtyMetadata.put(EntityDataTypes.EFFECT_AMBIENCE, (byte) 0);
         dirtyMetadata.put(EntityDataTypes.FREEZING_EFFECT_STRENGTH, 0f);
+        dirtyMetadata.put(EntityDataTypes.VISIBLE_MOB_EFFECTS, 0L);
 
         silent = false;
     }
@@ -490,7 +510,7 @@ public class SessionPlayerEntity extends PlayerEntity {
     public float getJumpVelocity() {
         float velocity = 0.42F;
 
-        if (session.getGeyser().getWorldManager().blockAt(session, this.getPosition().sub(0, EntityDefinitions.PLAYER.offset() + 0.1F, 0).toInt()).is(Blocks.HONEY_BLOCK)) {
+        if (session.getGeyser().getWorldManager().blockAt(session, this.position.down(0.1F).toInt()).is(Blocks.HONEY_BLOCK)) {
             velocity *= 0.6F;
         }
 
@@ -501,7 +521,7 @@ public class SessionPlayerEntity extends PlayerEntity {
         if (session.getGameMode() == GameMode.SPECTATOR) {
             return false;
         }
-        Vector3i pos = getPosition().down(EntityDefinitions.PLAYER.offset()).toInt();
+        Vector3i pos = this.position.toInt();
         BlockState state = session.getGeyser().getWorldManager().blockAt(session, pos);
         if (state.block().is(session, BlockTag.CLIMBABLE)) {
             return true;

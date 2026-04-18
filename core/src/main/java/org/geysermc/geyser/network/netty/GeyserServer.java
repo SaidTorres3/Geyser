@@ -28,6 +28,7 @@ package org.geysermc.geyser.network.netty;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.epoll.Epoll;
 import io.netty.channel.kqueue.KQueue;
@@ -40,6 +41,7 @@ import net.jodah.expiringmap.ExpirationPolicy;
 import net.jodah.expiringmap.ExpiringMap;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+import org.cloudburstmc.netty.channel.raknet.config.RakServerCookieMode;
 import org.cloudburstmc.netty.handler.codec.raknet.server.RakServerOfflineHandler;
 import org.cloudburstmc.netty.handler.codec.raknet.server.RakServerRateLimiter;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
@@ -130,11 +132,11 @@ public final class GeyserServer {
         this.bootstrap = this.createBootstrap();
         // setup SO_REUSEPORT if exists - or, if the option does not actually exist, reset listen count
         // otherwise, we try to bind multiple times which wont work if so_reuseport is not valid
-        if (!Bootstraps.setupBootstrap(this.bootstrap)) {
+        if (listenCount > 1 && !Bootstraps.setupBootstrap(this.bootstrap, TRANSPORT)) {
             this.listenCount = 1;
         }
 
-        if (this.geyser.config().advanced().bedrock().useHaproxyProtocol()) {
+        if (this.geyser.config().advanced().bedrock().useHaproxyProtocol() || this.geyser.config().advanced().bedrock().useWaterdogpeForwarding()) {
             this.proxiedAddresses = ExpiringMap.builder()
                     .expiration(30 + 1, TimeUnit.MINUTES)
                     .expirationPolicy(ExpirationPolicy.ACCESSED).build();
@@ -157,26 +159,33 @@ public final class GeyserServer {
     }
 
     private void modifyHandlers(ChannelFuture future) {
-        Channel channel = future.channel();
-        // Add our ping handler
-        channel.pipeline()
+        future.addListener((ChannelFutureListener) f -> {
+            if (!f.isSuccess()) {
+                GeyserImpl.getInstance().getLogger().warning("Not modifying handlers due to exception: " + f.cause());
+                return;
+            }
+
+            Channel channel = f.channel();
+            // Add our ping handler
+            channel.pipeline()
                 .addFirst(RakConnectionRequestHandler.NAME, new RakConnectionRequestHandler(this))
                 .addAfter(RakServerOfflineHandler.NAME, RakPingHandler.NAME, new RakPingHandler(this));
 
-        // Add proxy handler
-        boolean isProxyProtocol = this.geyser.config().advanced().bedrock().useHaproxyProtocol();
-        if (isProxyProtocol) {
-            channel.pipeline().addFirst("proxy-protocol-decoder", new ProxyServerHandler());
-        }
+            // Add proxy handler
+            boolean isProxyProtocol = this.geyser.config().advanced().bedrock().useHaproxyProtocol();
+            if (isProxyProtocol) {
+                channel.pipeline().addFirst("proxy-protocol-decoder", new ProxyServerHandler());
+            }
 
-        boolean isWhitelistedProxyProtocol = isProxyProtocol && !this.geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps().isEmpty();
-        if (Boolean.parseBoolean(System.getProperty("Geyser.RakRateLimitingDisabled", "false")) || isWhitelistedProxyProtocol) {
-            // We would already block any non-whitelisted IP addresses in onConnectionRequest so we can remove the rate limiter
-            channel.pipeline().remove(RakServerRateLimiter.NAME);
-        } else {
-            // Use our own rate limiter to allow multiple players from the same IP
-            channel.pipeline().replace(RakServerRateLimiter.NAME, RakGeyserRateLimiter.NAME, new RakGeyserRateLimiter(channel));
-        }
+            boolean isWhitelistedProxyProtocol = isProxyProtocol && !this.geyser.config().advanced().bedrock().haproxyProtocolWhitelistedIps().isEmpty();
+            if (Boolean.parseBoolean(System.getProperty("Geyser.RakRateLimitingDisabled", "false")) || isWhitelistedProxyProtocol) {
+                // We would already block any non-whitelisted IP addresses in onConnectionRequest so we can remove the rate limiter
+                channel.pipeline().remove(RakServerRateLimiter.NAME);
+            } else {
+                // Use our own rate limiter to allow multiple players from the same IP
+                channel.pipeline().replace(RakServerRateLimiter.NAME, RakGeyserRateLimiter.NAME, new RakGeyserRateLimiter(channel));
+            }
+        });
     }
 
     public void shutdown() {
@@ -217,8 +226,6 @@ public final class GeyserServer {
             }
         }
 
-        GeyserServerInitializer serverInitializer = new GeyserServerInitializer(this.geyser);
-        playerGroup = serverInitializer.getEventLoopGroup();
         this.geyser.getLogger().debug("Setting MTU to " + this.geyser.config().advanced().bedrock().mtu());
 
         int rakPacketLimit = positivePropOrDefault("Geyser.RakPacketLimit", DEFAULT_PACKET_LIMIT);
@@ -230,15 +237,18 @@ public final class GeyserServer {
         boolean rakSendCookie = Boolean.parseBoolean(System.getProperty("Geyser.RakSendCookie", "true"));
         this.geyser.getLogger().debug("Setting RakNet send cookie to " + rakSendCookie);
 
+        GeyserServerInitializer serverInitializer = new GeyserServerInitializer(this.geyser, rakSendCookie);
+        playerGroup = serverInitializer.getEventLoopGroup();
+
         return new ServerBootstrap()
-                .channelFactory(RakChannelFactory.server(TRANSPORT.datagramChannelClass()))
-                .group(group, childGroup)
-                .option(RakChannelOption.RAK_HANDLE_PING, true)
-                .option(RakChannelOption.RAK_MAX_MTU, this.geyser.config().advanced().bedrock().mtu())
-                .option(RakChannelOption.RAK_PACKET_LIMIT, rakPacketLimit)
-                .option(RakChannelOption.RAK_GLOBAL_PACKET_LIMIT, rakGlobalPacketLimit)
-                .option(RakChannelOption.RAK_SEND_COOKIE, rakSendCookie)
-                .childHandler(serverInitializer);
+            .channelFactory(RakChannelFactory.server(TRANSPORT.datagramChannelClass()))
+            .group(group, childGroup)
+            .option(RakChannelOption.RAK_HANDLE_PING, true)
+            .option(RakChannelOption.RAK_MAX_MTU, this.geyser.config().advanced().bedrock().mtu())
+            .option(RakChannelOption.RAK_PACKET_LIMIT, rakPacketLimit)
+            .option(RakChannelOption.RAK_GLOBAL_PACKET_LIMIT, rakGlobalPacketLimit)
+            .option(RakChannelOption.RAK_SERVER_COOKIE_MODE, rakSendCookie ? RakServerCookieMode.ACTIVE : RakServerCookieMode.INVALID)
+            .childHandler(serverInitializer);
     }
 
     public boolean onConnectionRequest(InetSocketAddress inetSocketAddress) {
@@ -260,7 +270,7 @@ public final class GeyserServer {
 
         String ip;
         if (geyser.config().logPlayerIpAddresses()) {
-            if (geyser.config().advanced().bedrock().useHaproxyProtocol()) {
+            if (this.proxiedAddresses != null) {
                 ip = this.proxiedAddresses.getOrDefault(inetSocketAddress, inetSocketAddress).toString();
             } else {
                 ip = inetSocketAddress.toString();
@@ -289,7 +299,7 @@ public final class GeyserServer {
         if (geyser.config().debugMode() && PRINT_DEBUG_PINGS) {
             String ip;
             if (geyser.config().logPlayerIpAddresses()) {
-                if (geyser.config().advanced().bedrock().useHaproxyProtocol()) {
+                if (this.proxiedAddresses != null) {
                     ip = this.proxiedAddresses.getOrDefault(inetSocketAddress, inetSocketAddress).toString();
                 } else {
                     ip = inetSocketAddress.toString();

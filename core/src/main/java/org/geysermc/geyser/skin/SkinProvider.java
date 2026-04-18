@@ -33,6 +33,8 @@ import com.google.gson.JsonObject;
 import it.unimi.dsi.fastutil.bytes.ByteArrays;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.cloudburstmc.protocol.bedrock.data.skin.ImageData;
+import org.cloudburstmc.protocol.bedrock.data.skin.SerializedSkin;
 import org.geysermc.geyser.GeyserImpl;
 import org.geysermc.geyser.api.event.bedrock.SessionSkinApplyEvent;
 import org.geysermc.geyser.api.network.AuthType;
@@ -99,6 +101,7 @@ public class SkinProvider {
     static final SkinGeometry SKULL_GEOMETRY;
     static final SkinGeometry WEARING_CUSTOM_SKULL;
     static final SkinGeometry WEARING_CUSTOM_SKULL_SLIM;
+    public static final SerializedSkin EMPTY_SERIALIZED_SKIN;
 
     static {
         // Generate the empty texture to use as an emergency fallback
@@ -130,6 +133,17 @@ public class SkinProvider {
         WEARING_CUSTOM_SKULL = new SkinGeometry("{\"geometry\" :{\"default\" :\"geometry.humanoid.wearingCustomSkull\"}}", wearingCustomSkull);
         String wearingCustomSkullSlim = new String(FileUtils.readAllBytes("bedrock/skin/geometry.humanoid.wearingCustomSkullSlim.json"), StandardCharsets.UTF_8);
         WEARING_CUSTOM_SKULL_SLIM = new SkinGeometry("{\"geometry\" :{\"default\" :\"geometry.humanoid.wearingCustomSkullSlim\"}}", wearingCustomSkullSlim);
+
+        /* Used for non-player waypoints... Bedrock requires a skin being sent. Lovely. */
+        EMPTY_SERIALIZED_SKIN = SerializedSkin.builder()
+            .fullSkinId("emptyFullSkinId")
+            .skinId("skinId")
+            .skinData(ImageData.of(EMPTY_SKIN.skinData()))
+            .capeData(ImageData.EMPTY)
+            .geometryName(SkinGeometry.SLIM.geometryName())
+            .geometryData(SkinGeometry.SLIM.geometryData())
+            .premium(true)
+            .build();
     }
 
     public static ExecutorService getExecutorService() {
@@ -182,7 +196,7 @@ public class SkinProvider {
     /**
      * If skin data fails to apply, or there is no skin data to apply, determine what skin we should give as a fallback.
      */
-    static SkinData determineFallbackSkinData(UUID uuid) {
+    public static SkinData determineFallbackSkinData(UUID uuid) {
         Skin skin = null;
         Cape cape = null;
         SkinGeometry geometry = SkinGeometry.WIDE;
@@ -249,7 +263,7 @@ public class SkinProvider {
                     try {
                         Skin skin = skinAndCape.skin();
                         Cape cape = skinAndCape.cape();
-                        SkinGeometry geometry = data.isAlex() ? SkinGeometry.SLIM : SkinGeometry.WIDE;
+                        SkinGeometry geometry = data.isSlim() ? SkinGeometry.SLIM : SkinGeometry.WIDE;
 
                         // Whether we should see if this player has a Bedrock skin we should check for on failure of
                         // any skin property
@@ -263,9 +277,9 @@ public class SkinProvider {
                         boolean isBedrock = GeyserImpl.getInstance().connectionByUuid(entity.uuid()) != null;
                         SkinData skinData = new SkinData(skin, cape, geometry);
                         final EventSkinData eventSkinData = new EventSkinData(skinData);
-                        GeyserImpl.getInstance().eventBus().fire(new SessionSkinApplyEvent(session, entity.getUsername(), entity.uuid(), data.isAlex(), isBedrock, skinData) {
+                        GeyserImpl.getInstance().eventBus().fire(new SessionSkinApplyEvent(session, entity.getUsername(), entity.uuid(), data.isSlim(), isBedrock, skinData) {
                             @Override
-                            public SkinData skinData() {
+                            public @NonNull SkinData skinData() {
                                 return eventSkinData.skinData();
                             }
 
