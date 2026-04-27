@@ -47,56 +47,51 @@ public class ProxyServerHandler extends SimpleChannelInboundHandler<DatagramPack
     protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket packet) {
         ByteBuf content = packet.content();
 
-        int detectedVersion = ProxyProtocolDecoder.findVersion(content);
-
-        if (detectedVersion != -1) {
-            // A PROXY protocol header is detected in this packet.
-            final HAProxyMessage decoded;
-            try {
-                // The decode method consumes the header bytes from the `content` ByteBuf.
-                decoded = ProxyProtocolDecoder.decode(content, detectedVersion);
-            } catch (HAProxyProtocolException e) {
-                log.debug("{} sent malformed PROXY header", packet.sender(), e);
-                return; // Drop malformed packet.
-            }
-
-            if (decoded == null) {
-                // This case should ideally not be reached if detectedVersion is valid, but acts as a safeguard.
-                log.debug("PROXY header detected but failed to decode for {}", packet.sender());
-                return;
-            }
-
-            // Header decoded successfully. Let's cache the real address.
-            InetSocketAddress realAddress = new InetSocketAddress(decoded.sourceAddress(), decoded.sourcePort());
-            GeyserImpl.getInstance().getGeyserServer().getProxiedAddresses().put(packet.sender(), realAddress);
-            log.trace("Decoded PROXY header from proxy {} for real address {}", packet.sender(), realAddress);
-
-            // CRITICAL CHECK: Determine if there is any payload left after stripping the header.
-            if (!content.isReadable()) {
-                // This was a header-only packet.
-                // We have extracted and cached the necessary information.
-                // There is no payload to forward, so we stop processing this packet here.
-                return;
-            }
-
-            // This packet had a header AND a payload.
-            // The header is now stripped, and we can forward the remaining payload.
-            ctx.fireChannelRead(packet.retain());
-            
-        } else {
-            // No PROXY header detected in this packet.
-            // This must be a subsequent data packet for a session initiated with a header.
-            InetSocketAddress cachedAddress = GeyserImpl.getInstance().getGeyserServer().getProxiedAddresses().get(packet.sender());
-
-            if (cachedAddress == null) {
-                // No header in this packet AND no cached session information.
-                // This is an invalid packet from an unknown source.
-                return;
-            }
-
-            // We have a valid session from cache. Forward this data packet as is.
+        // Since FRP 0.67.0, the PROXY protocol header is only sent on the first packet of each session.
+        // Check the cache first: if we already have a real address for this sender, this is a subsequent
+        // data packet with no header — forward it directly without running the PROXY detector.
+        // This also avoids false-positive V1 detection, since ProxyProtocolDecoder.findVersion() returns 1
+        // (V1 fallback) for any packet ≥13 bytes that lacks the V2 binary prefix, which includes all
+        // ordinary RakNet packets.
+        InetSocketAddress cachedAddress = GeyserImpl.getInstance().getGeyserServer().getProxiedAddresses().get(packet.sender());
+        if (cachedAddress != null) {
             log.trace("Reusing PROXY session for proxy {}", packet.sender());
             ctx.fireChannelRead(packet.retain());
+            return;
         }
+
+        // No cached address — this must be the first packet, which should carry the PROXY header.
+        int detectedVersion = ProxyProtocolDecoder.findVersion(content);
+        if (detectedVersion == -1) {
+            // Packet is too short to contain a PROXY header and we have no cached session.
+            // Drop it.
+            return;
+        }
+
+        final HAProxyMessage decoded;
+        try {
+            decoded = ProxyProtocolDecoder.decode(content, detectedVersion);
+        } catch (HAProxyProtocolException e) {
+            log.debug("{} sent malformed PROXY header", packet.sender(), e);
+            return;
+        }
+
+        if (decoded == null) {
+            // Not a valid PROXY header and no cached session — drop.
+            return;
+        }
+
+        // Header decoded successfully. Cache the real address.
+        InetSocketAddress realAddress = new InetSocketAddress(decoded.sourceAddress(), decoded.sourcePort());
+        GeyserImpl.getInstance().getGeyserServer().getProxiedAddresses().put(packet.sender(), realAddress);
+        log.debug("Got PROXY header: (from {}) {}", packet.sender(), realAddress);
+
+        if (!content.isReadable()) {
+            // Header-only packet (no RakNet payload). Address is cached; nothing to forward.
+            return;
+        }
+
+        // Header + payload in the same datagram. Forward the remaining payload.
+        ctx.fireChannelRead(packet.retain());
     }
 }
